@@ -108,7 +108,12 @@ if selected_school:
         ]["Major"].unique())
         selected_major = st.selectbox("Select a Major:", majors)
 
-        if selected_major:
+        search_button = st.button("Search Jobs")
+
+        if search_button and selected_major:
+            # Reset pagination when a new search is initiated
+            st.session_state.current_page = 0
+
             title_keywords, skill_keywords = load_major_keywords(selected_major)
 
             if not title_keywords and not skill_keywords:
@@ -125,8 +130,7 @@ if selected_school:
 
                 # Pagination setup
                 JOBS_PER_PAGE = 10
-                if 'current_page' not in st.session_state:
-                    st.session_state.current_page = 0
+                # current_page is now initialized only when the search button is clicked
 
                 total_jobs = len(results)
                 total_pages = (total_jobs + JOBS_PER_PAGE - 1) // JOBS_PER_PAGE
