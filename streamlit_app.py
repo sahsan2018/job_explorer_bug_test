@@ -121,12 +121,12 @@ if selected_school:
                 st.warning("No keywords found for this major.")
                 st.session_state.search_results = pd.DataFrame() # Clear results if no keywords
             else:
-                st.success(
-                    f"Searching with {len(title_keywords)} title and {len(skill_keywords)} skill keywords..."
-                )
-                query, params = build_query(title_keywords, skill_keywords)
-                st.session_state.search_results = query_jobs(query, params) # Store results in session state
+                with st.spinner("Searching for jobs..."):
+                    query, params = build_query(title_keywords, skill_keywords)
+                    st.session_state.search_results = query_jobs(query, params) # Store results in session state
 
+                if not st.session_state.search_results.empty:
+                    st.success(f"Search complete! Found {len(st.session_state.search_results)} relevant job postings.")
         # Display results if they exist in session state
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             results = st.session_state.search_results
