@@ -164,3 +164,4 @@ cython_debug/
 memory-bank/
 .streamlit/secrets.toml
 data/jobs.db
+venv
