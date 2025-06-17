@@ -149,18 +149,18 @@ if selected_school:
             results_page = results.iloc[start_index:end_index]
 
             # Display navigation buttons
-            nav_cols = st.columns([1, 1, 2, 1, 1])
+            nav_cols = st.columns([1, 1, 1], vertical_alignment='center', gap='large', border=True)
+            with nav_cols[0]:
+                if st.session_state.current_page > 0:
+                    if st.button("Previous"):
+                        st.session_state.current_page -= 1
+                        st.rerun()
             with nav_cols[0]:
                 if st.session_state.current_page > 0:
                     if st.button("First Page"):
                         st.session_state.current_page = 0
                         st.rerun()
             with nav_cols[1]:
-                if st.session_state.current_page > 0:
-                    if st.button("Previous"):
-                        st.session_state.current_page -= 1
-                        st.rerun()
-            with nav_cols[2]:
                 # Page number selector
                 page_options = [i + 1 for i in range(total_pages)]
                 selected_page_display = st.selectbox(
@@ -173,12 +173,12 @@ if selected_school:
                 if selected_page_display - 1 != st.session_state.current_page:
                     st.session_state.current_page = selected_page_display - 1
                     st.rerun()
-            with nav_cols[3]:
+            with nav_cols[2]:
                 if st.session_state.current_page < total_pages - 1:
                     if st.button("Next"):
                         st.session_state.current_page += 1
                         st.rerun()
-            with nav_cols[4]:
+            with nav_cols[2]:
                 if st.session_state.current_page < total_pages - 1:
                     if st.button("Last Page"):
                         st.session_state.current_page = total_pages - 1
@@ -222,6 +222,44 @@ if selected_school:
 
                         st.write(f"**Views:** {row['views']} | **Applies:** {row['applies']}")
                     st.markdown("---") # Separator for readability
+
+            # Display navigation buttons (Top)
+            nav_cols_top = st.columns([1, 1, 1], vertical_alignment='center', gap='large', border=True)
+            with nav_cols_top[0]:
+                if st.session_state.current_page > 0:
+                    if st.button("Previous", key="prev_top"):
+                        st.session_state.current_page -= 1
+                        st.rerun()
+            with nav_cols_top[0]:
+                if st.session_state.current_page > 0:
+                    if st.button("First Page", key="first_top"):
+                        st.session_state.current_page = 0
+                        st.rerun()
+            with nav_cols_top[1]:
+                # Page number selector (Top)
+                page_options = [i + 1 for i in range(total_pages)]
+                selected_page_display_top = st.selectbox(
+                    "Go to Page:",
+                    options=page_options,
+                    index=st.session_state.current_page,
+                    key="page_selector_top"
+                )
+                # Update current_page if selection changes
+                if selected_page_display_top - 1 != st.session_state.current_page:
+                    st.session_state.current_page = selected_page_display_top - 1
+                    st.rerun()
+            with nav_cols_top[2]:
+                if st.session_state.current_page < total_pages - 1:
+                    if st.button("Next", key="next_top"):
+                        st.session_state.current_page += 1
+                        st.rerun()
+            with nav_cols_top[2]:
+                if st.session_state.current_page < total_pages - 1:
+                    if st.button("Last Page", key="last_top"):
+                        st.session_state.current_page = total_pages - 1
+                        st.rerun()
+
+            st.write(f"Displaying jobs {start_index + 1}-{end_index} of {total_jobs}")
 
             if not results.empty:
                 st.download_button(
