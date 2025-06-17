@@ -44,34 +44,36 @@ def load_major_keywords(major):
 
 # Build SQL query combining title and skill filters
 def build_query(title_keywords, skill_keywords):
-    """Return SQL and parameters to search by job title and skill keywords."""
-    conditions = []
+    """Return SQL and parameters to search by job title and skill keywords with relevancy scoring."""
+    select_parts = ["0"] # Start with 0 for relevancy_score
+    where_conditions = []
     params = []
 
-    if title_keywords:
-        # Match any of the provided title keywords
-        title_cond = " OR ".join(["title LIKE ?" for _ in title_keywords])
-        conditions.append(f"({title_cond})")
-        params.extend([f"%{kw}%" for kw in title_keywords])
+    # Add scoring for title keywords
+    for kw in title_keywords:
+        select_parts.append(f"(CASE WHEN title LIKE ? THEN 10 ELSE 0 END)")
+        where_conditions.append("title LIKE ?")
+        params.extend([f"%{kw}%", f"%{kw}%"]) # One for CASE, one for WHERE
 
-    if skill_keywords:
-        # Search the job description for skill keywords
-        skill_cond = " OR ".join(["description LIKE ?" for _ in skill_keywords])
-        conditions.append(f"({skill_cond})")
-        params.extend([f"%{kw}%" for kw in skill_keywords])
+    # Add scoring for skill keywords
+    for kw in skill_keywords:
+        select_parts.append(f"(CASE WHEN description LIKE ? THEN 5 ELSE 0 END)")
+        where_conditions.append("description LIKE ?")
+        params.extend([f"%{kw}%", f"%{kw}%"]) # One for CASE, one for WHERE
 
-    if not conditions:
+    if not title_keywords and not skill_keywords:
         # No keywords found; return a simple query
-        return "SELECT * FROM job_postings LIMIT 100;", params
+        return "SELECT * FROM job_postings LIMIT 100;", []
 
-    if title_keywords and skill_keywords:
-        # Require at least one title keyword AND one skill keyword for higher relevancy
-        where_clause = " AND ".join(conditions)
-    else:
-        # Only one type of keyword provided; use OR within that set
-        where_clause = conditions[0]
+    # Combine select parts for relevancy score
+    select_clause = " + ".join(select_parts)
+    sql = f"SELECT *, ({select_clause}) AS relevancy_score FROM job_postings"
 
-    sql = f"SELECT * FROM job_postings WHERE {where_clause} LIMIT 100;"
+    # Combine where conditions with OR for broader matching
+    if where_conditions:
+        sql += f" WHERE {' OR '.join(where_conditions)}"
+
+    sql += " ORDER BY relevancy_score DESC LIMIT 100;"
     return sql, params
 
 # Run query on jobs.db
@@ -119,13 +121,7 @@ if selected_school:
                 results = query_jobs(query, params)
 
                 st.subheader(f"Job Postings for: {selected_major}")
-                if title_keywords and skill_keywords:
-                    st.write("Matched using job title and skill keywords.")
-                elif title_keywords:
-                    st.write("Matched using job title keywords only.")
-                else:
-                    st.write("Matched using skill keywords only.")
-
+                st.write("Results are ranked by relevancy, considering both job title and skill keywords.")
                 st.dataframe(results)
 
                 if not results.empty:
