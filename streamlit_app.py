@@ -113,112 +113,120 @@ if selected_school:
         if search_button and selected_major:
             # Reset pagination when a new search is initiated
             st.session_state.current_page = 0
+            st.session_state.last_selected_major = selected_major # Store the major that triggered the search
 
             title_keywords, skill_keywords = load_major_keywords(selected_major)
 
             if not title_keywords and not skill_keywords:
                 st.warning("No keywords found for this major.")
+                st.session_state.search_results = pd.DataFrame() # Clear results if no keywords
             else:
                 st.success(
                     f"Searching with {len(title_keywords)} title and {len(skill_keywords)} skill keywords..."
                 )
                 query, params = build_query(title_keywords, skill_keywords)
-                results = query_jobs(query, params)
+                st.session_state.search_results = query_jobs(query, params) # Store results in session state
 
-                st.subheader(f"Job Postings for: {selected_major}")
-                st.write("Results are ranked by relevancy, considering both job title and skill keywords.")
+        # Display results if they exist in session state
+        if 'search_results' in st.session_state and not st.session_state.search_results.empty:
+            results = st.session_state.search_results
+            current_major_display = st.session_state.get('last_selected_major', 'Selected Major') # Use stored major for display
 
-                # Pagination setup
-                JOBS_PER_PAGE = 10
-                # current_page is now initialized only when the search button is clicked
+            st.subheader(f"Job Postings for: {current_major_display}")
+            st.write("Results are ranked by relevancy, considering both job title and skill keywords.")
 
-                total_jobs = len(results)
-                total_pages = (total_jobs + JOBS_PER_PAGE - 1) // JOBS_PER_PAGE
+            # Pagination setup
+            JOBS_PER_PAGE = 10
+            if 'current_page' not in st.session_state:
+                st.session_state.current_page = 0 # Initialize if not already set (e.g., first load)
 
-                start_index = st.session_state.current_page * JOBS_PER_PAGE
-                end_index = min(start_index + JOBS_PER_PAGE, total_jobs)
+            total_jobs = len(results)
+            total_pages = (total_jobs + JOBS_PER_PAGE - 1) // JOBS_PER_PAGE
 
-                results_page = results.iloc[start_index:end_index]
+            start_index = st.session_state.current_page * JOBS_PER_PAGE
+            end_index = min(start_index + JOBS_PER_PAGE, total_jobs)
 
-                # Display navigation buttons
-                nav_cols = st.columns([1, 1, 2, 1, 1])
-                with nav_cols[0]:
-                    if st.session_state.current_page > 0:
-                        if st.button("First Page"):
-                            st.session_state.current_page = 0
-                            st.rerun()
-                with nav_cols[1]:
-                    if st.session_state.current_page > 0:
-                        if st.button("Previous"):
-                            st.session_state.current_page -= 1
-                            st.rerun()
-                with nav_cols[2]:
-                    # Page number selector
-                    page_options = [i + 1 for i in range(total_pages)]
-                    selected_page_display = st.selectbox(
-                        "Go to Page:",
-                        options=page_options,
-                        index=st.session_state.current_page,
-                        key="page_selector"
-                    )
-                    # Update current_page if selection changes
-                    if selected_page_display - 1 != st.session_state.current_page:
-                        st.session_state.current_page = selected_page_display - 1
+            results_page = results.iloc[start_index:end_index]
+
+            # Display navigation buttons
+            nav_cols = st.columns([1, 1, 2, 1, 1])
+            with nav_cols[0]:
+                if st.session_state.current_page > 0:
+                    if st.button("First Page"):
+                        st.session_state.current_page = 0
                         st.rerun()
-                with nav_cols[3]:
-                    if st.session_state.current_page < total_pages - 1:
-                        if st.button("Next"):
-                            st.session_state.current_page += 1
-                            st.rerun()
-                with nav_cols[4]:
-                    if st.session_state.current_page < total_pages - 1:
-                        if st.button("Last Page"):
-                            st.session_state.current_page = total_pages - 1
-                            st.rerun()
+            with nav_cols[1]:
+                if st.session_state.current_page > 0:
+                    if st.button("Previous"):
+                        st.session_state.current_page -= 1
+                        st.rerun()
+            with nav_cols[2]:
+                # Page number selector
+                page_options = [i + 1 for i in range(total_pages)]
+                selected_page_display = st.selectbox(
+                    "Go to Page:",
+                    options=page_options,
+                    index=st.session_state.current_page,
+                    key="page_selector"
+                )
+                # Update current_page if selection changes
+                if selected_page_display - 1 != st.session_state.current_page:
+                    st.session_state.current_page = selected_page_display - 1
+                    st.rerun()
+            with nav_cols[3]:
+                if st.session_state.current_page < total_pages - 1:
+                    if st.button("Next"):
+                        st.session_state.current_page += 1
+                        st.rerun()
+            with nav_cols[4]:
+                if st.session_state.current_page < total_pages - 1:
+                    if st.button("Last Page"):
+                        st.session_state.current_page = total_pages - 1
+                        st.rerun()
 
-                st.write(f"Displaying jobs {start_index + 1}-{end_index} of {total_jobs}")
+            st.write(f"Displaying jobs {start_index + 1}-{end_index} of {total_jobs}")
 
-                if results_page.empty:
-                    st.info("No job postings found for this page.")
-                else:
-                    for index, row in results_page.iterrows():
-                        st.subheader(f"{row['title']} at {row['company_name']}")
-                        st.write(f"**Location:** {row['location']} | **Experience Level:** {row['formatted_experience_level']} | **Relevancy Score:** {row['relevancy_score']:.2f}")
+            if results_page.empty:
+                st.info("No job postings found for this page.")
+            else:
+                for index, row in results_page.iterrows():
+                    st.subheader(f"{row['title']} at {row['company_name']}")
+                    st.write(f"**Location:** {row['location']} | **Experience Level:** {row['formatted_experience_level']} | **Relevancy Score:** {row['relevancy_score']:.2f}")
 
-                        with st.expander("View Details"):
-                            st.write(f"**Description:**")
-                            st.markdown(row['description'])
+                    with st.expander("View Details"):
+                        st.write(f"**Description:**")
+                        st.markdown(row['description'])
 
-                            if pd.notna(row['skills_desc']) and row['skills_desc']:
-                                st.write(f"**Skills:**")
-                                st.markdown(row['skills_desc'])
+                        if pd.notna(row['skills_desc']) and row['skills_desc']:
+                            st.write(f"**Skills:**")
+                            st.markdown(row['skills_desc'])
 
-                            st.write(f"**Listed Time:** {row['listed_time']}")
-                            st.write(f"**Work Type:** {row['formatted_work_type']}")
-                            st.write(f"**Remote Allowed:** {'Yes' if row['remote_allowed'] else 'No'}")
+                        st.write(f"**Listed Time:** {row['listed_time']}")
+                        st.write(f"**Work Type:** {row['formatted_work_type']}")
+                        st.write(f"**Remote Allowed:** {'Yes' if row['remote_allowed'] else 'No'}")
 
-                            salary_info = []
-                            if pd.notna(row['min_salary']) and pd.notna(row['max_salary']):
-                                salary_info.append(f"{row['currency']} {row['min_salary']:.2f} - {row['max_salary']:.2f} {row['pay_period']}")
-                            elif pd.notna(row['normalized_salary']):
-                                salary_info.append(f"Normalized Salary: {row['currency']} {row['normalized_salary']:.2f}")
-                            if salary_info:
-                                st.write(f"**Salary:** {', '.join(salary_info)}")
-                            else:
-                                st.write("**Salary:** Not specified")
+                        salary_info = []
+                        if pd.notna(row['min_salary']) and pd.notna(row['max_salary']):
+                            salary_info.append(f"{row['currency']} {row['min_salary']:.2f} - {row['max_salary']:.2f} {row['pay_period']}")
+                        elif pd.notna(row['normalized_salary']):
+                            salary_info.append(f"Normalized Salary: {row['currency']} {row['normalized_salary']:.2f}")
+                        if salary_info:
+                            st.write(f"**Salary:** {', '.join(salary_info)}")
+                        else:
+                            st.write("**Salary:** Not specified")
 
-                            if pd.notna(row['job_posting_url']) and row['job_posting_url']:
-                                st.markdown(f"**Job Posting URL:** [Link]({row['job_posting_url']})")
-                            if pd.notna(row['application_url']) and row['application_url']:
-                                st.markdown(f"**Application URL:** [Link]({row['application_url']})")
+                        if pd.notna(row['job_posting_url']) and row['job_posting_url']:
+                            st.markdown(f"**Job Posting URL:** [Link]({row['job_posting_url']})")
+                        if pd.notna(row['application_url']) and row['application_url']:
+                            st.markdown(f"**Application URL:** [Link]({row['application_url']})")
 
-                            st.write(f"**Views:** {row['views']} | **Applies:** {row['applies']}")
-                        st.markdown("---") # Separator for readability
+                        st.write(f"**Views:** {row['views']} | **Applies:** {row['applies']}")
+                    st.markdown("---") # Separator for readability
 
-                if not results.empty:
-                    st.download_button(
-                        "Download Results as CSV",
-                        data=results.to_csv(index=False),
-                        file_name="job_results.csv",
-                        mime="text/csv"
-                    )
+            if not results.empty:
+                st.download_button(
+                    "Download Results as CSV",
+                    data=results.to_csv(index=False),
+                    file_name="job_results.csv",
+                    mime="text/csv"
+                )
