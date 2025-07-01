@@ -162,6 +162,8 @@ cython_debug/
 #.idea/
 
 memory-bank/
+test-scripts/
 .streamlit/secrets.toml
 data/jobs.db
+data/job_embeddings.faiss
 venv
