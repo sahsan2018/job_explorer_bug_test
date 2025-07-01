@@ -12,7 +12,8 @@ MAJOR_DB_PATH = "data/majors.db"
 MAP_DB_PATH = "data/map.db"
 JOBS_DB_PATH = "data/jobs.db"
 FAISS_INDEX_PATH = "data/job_embeddings.faiss" # New constant for FAISS index path
-GDRIVE_URL = st.secrets["DB_URL"]
+JOBS_GDRIVE_URL = st.secrets["JOB_URL"] # Renamed for clarity
+FAISS_GDRIVE_URL = st.secrets["FAISS_URL"] # New constant for FAISS index Google Drive URL
 
 # New Constant for job posting limit
 MAX_JOB_POSTINGS_FETCH = 100
@@ -26,7 +27,13 @@ RELEVANCY_THRESHOLD = 0.1 # Minimum relevancy score to display a job
 def download_jobs_db():
     if not os.path.exists(JOBS_DB_PATH):
         st.info("Downloading job postings database...")
-        gdown.download(GDRIVE_URL, JOBS_DB_PATH, quiet=False)
+        gdown.download(JOBS_GDRIVE_URL, JOBS_DB_PATH, quiet=False)
+
+# Ensure FAISS index exists locally
+def download_faiss_index():
+    if not os.path.exists(FAISS_INDEX_PATH):
+        st.info("Downloading FAISS index...")
+        gdown.download(FAISS_GDRIVE_URL, FAISS_INDEX_PATH, quiet=False)
 
 def ensure_embedding_metadata_table_exists():
     conn = None
@@ -131,8 +138,9 @@ def get_major_embedding(major_name):
     return major_embedding
 
 # Perform semantic search using FAISS
-def perform_semantic_search(major_embedding, faiss_index, job_id_map, k_results):
-    D, I = faiss_index.search(major_embedding.reshape(1, -1), k_results)
+@st.cache_data
+def perform_semantic_search(major_embedding, _faiss_index, job_id_map, k_results):
+    D, I = _faiss_index.search(major_embedding.reshape(1, -1), k_results)
     
     results = []
     for i, score in zip(I[0], D[0]):
@@ -178,8 +186,9 @@ def query_jobs(sql_query, params):
 st.set_page_config(page_title="Major-to-Job Explorer", layout="wide")
 st.title("🎓 Major-to-Job Postings Explorer")
 
-# Download job DB if needed
+# Download job DB and FAISS index if needed
 download_jobs_db()
+download_faiss_index()
 
 # Ensure embedding metadata table exists
 ensure_embedding_metadata_table_exists()
