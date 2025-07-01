@@ -24,7 +24,7 @@ def download_jobs_db():
 def load_major_hierarchy():
     conn = sqlite3.connect(MAJOR_DB_PATH)
     df = pd.read_sql(
-        "SELECT DISTINCT School, Department, [Major Name] AS Major FROM majors;",
+        "SELECT DISTINCT School, Department, [Major Name] AS Major, [Degree Level] AS DegreeLevel FROM majors;",
         conn,
     )
     conn.close()
@@ -112,11 +112,24 @@ if selected_school:
     selected_department = st.selectbox("Select a Department:", departments)
 
     if selected_department:
-        majors = sorted(hierarchy_df[
+        majors_df = hierarchy_df[
             (hierarchy_df["School"] == selected_school) &
             (hierarchy_df["Department"] == selected_department)
-        ]["Major"].unique())
-        selected_major = st.selectbox("Select a Major:", majors)
+        ].copy() # Use .copy() to avoid SettingWithCopyWarning
+
+        # Create a display string for the selectbox
+        majors_df["Display"] = majors_df["Major"] + " (" + majors_df["DegreeLevel"] + ")"
+        
+        # Create a mapping from display string to actual major name
+        major_display_to_name = dict(zip(majors_df["Display"], majors_df["Major"]))
+
+        # Sort the display names
+        display_majors = sorted(majors_df["Display"].unique())
+        
+        selected_major_display = st.selectbox("Select a Major:", display_majors)
+
+        # Get the actual major name from the display name
+        selected_major = major_display_to_name.get(selected_major_display)
 
         search_button = st.button("Search Jobs")
 
