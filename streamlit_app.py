@@ -10,6 +10,9 @@ MAP_DB_PATH = "data/map.db"
 JOBS_DB_PATH = "data/jobs.db"
 GDRIVE_URL = st.secrets["DB_URL"]
 
+# New Constant for job posting limit
+MAX_JOB_POSTINGS_FETCH = 100
+
 # Ensure job DB exists locally
 def download_jobs_db():
     if not os.path.exists(JOBS_DB_PATH):
@@ -63,17 +66,24 @@ def build_query(title_keywords, skill_keywords):
 
     if not title_keywords and not skill_keywords:
         # No keywords found; return a simple query
-        return "SELECT * FROM job_postings LIMIT 100;", []
+        return "SELECT *, 0 AS relevancy_score FROM job_postings WHERE 1=0;", [] # Return empty if no keywords
 
     # Combine select parts for relevancy score
     select_clause = " + ".join(select_parts)
     sql = f"SELECT *, ({select_clause}) AS relevancy_score FROM job_postings"
 
     # Combine where conditions with OR for broader matching
+    # Add keyword conditions if any
     if where_conditions:
-        sql += f" WHERE {' OR '.join(where_conditions)}"
+        sql += f" WHERE ({' OR '.join(where_conditions)})" # Wrap keyword conditions in parentheses
 
-    sql += " ORDER BY relevancy_score DESC LIMIT 100;"
+    # Add relevancy score filter
+    if where_conditions: # If there were already keyword conditions, use AND
+        sql += " AND relevancy_score > 0"
+    else: # If no keyword conditions, use WHERE
+        sql += " WHERE relevancy_score > 0"
+
+    sql += f" ORDER BY relevancy_score DESC LIMIT {MAX_JOB_POSTINGS_FETCH};"
     return sql, params
 
 # Run query on jobs.db
