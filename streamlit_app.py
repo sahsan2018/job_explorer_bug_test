@@ -52,16 +52,10 @@ def load_embedding_model():
 
 # Load FAISS index and job ID map
 @st.cache_resource
-def load_faiss_index_and_id_map():
-    download_faiss_index() # Ensure index is downloaded before loading
+def load_faiss_index():
+    download_faiss_index()
     index = faiss.read_index(FAISS_INDEX_PATH)
-    
-    conn = sqlite3.connect(JOBS_DB_PATH)
-    df = pd.read_sql("SELECT job_id FROM job_postings;", conn)
-    conn.close()
-
-    id_map = {i: job_id for i, job_id in enumerate(df['job_id'].tolist())}
-    return index, id_map
+    return index
 
 # Generate embedding for a major
 @st.cache_data
@@ -74,14 +68,14 @@ def get_major_embedding(major_name):
 
 # Perform semantic search using FAISS
 @st.cache_data
-def perform_semantic_search(major_embedding, _faiss_index, job_id_map, k_results):
+def perform_semantic_search(major_embedding, _faiss_index, k_results):
     D, I = _faiss_index.search(major_embedding.reshape(1, -1), k_results)
-    
     results = []
-    for i, score in zip(I[0], D[0]):
-        if i != -1:
-            job_id = job_id_map[i]
-            results.append({'job_id': job_id, 'semantic_score': float(score)})
+    for idx64, score in zip(I[0], D[0]):
+        if idx64 == -1:
+            continue
+        job_id = int(idx64)                # this *is* your job_id
+        results.append({'job_id': job_id, 'semantic_score': float(score)})
     return pd.DataFrame(results)
 
 # Fetch jobs by ID and calculate relevancy in Python
@@ -164,13 +158,13 @@ if selected_school:
             st.session_state.last_selected_major = selected_major
 
             with st.spinner("Loading semantic data..."):
-                faiss_index, job_id_map = load_faiss_index_and_id_map()
+                faiss_index = load_faiss_index()
             
             with st.spinner(f"Generating embedding for {selected_major}..."):
                 major_embedding = get_major_embedding(selected_major)
 
             with st.spinner("Performing semantic search..."):
-                semantic_results = perform_semantic_search(major_embedding, faiss_index, job_id_map, MAX_JOB_POSTINGS_FETCH * 2)
+                semantic_results = perform_semantic_search(major_embedding, faiss_index, MAX_JOB_POSTINGS_FETCH * 2)
                 st.session_state.search_results = get_jobs_with_semantic_scores(semantic_results)
 
             if not st.session_state.search_results.empty:
