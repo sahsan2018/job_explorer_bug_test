@@ -3,6 +3,11 @@ import sqlite3
 import pandas as pd
 import gdown
 import os
+import streamlit as st
+import sqlite3
+import pandas as pd
+import gdown
+import os
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
@@ -11,17 +16,16 @@ import numpy as np
 MAJOR_DB_PATH = "data/majors.db"
 MAP_DB_PATH = "data/map.db"
 JOBS_DB_PATH = "data/jobs.db"
-FAISS_INDEX_PATH = "data/job_embeddings.faiss" # New constant for FAISS index path
-JOBS_GDRIVE_URL = st.secrets["JOB_URL"] # Renamed for clarity
-FAISS_GDRIVE_URL = st.secrets["FAISS_URL"] # New constant for FAISS index Google Drive URL
+FAISS_INDEX_PATH = "data/job_embeddings.faiss"
+JOBS_GDRIVE_URL = st.secrets["JOB_URL"]
+FAISS_GDRIVE_URL = st.secrets["FAISS_URL"]
 
 # New Constant for job posting limit
 MAX_JOB_POSTINGS_FETCH = 100
 
 # Semantic search constants
-EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
-SEMANTIC_SCORE_SCALE = 100.0 # Scale semantic similarity (0-1) to 0-100
-RELEVANCY_THRESHOLD = 0.1 # Minimum relevancy score to display a job
+SEMANTIC_SCORE_SCALE = 100.0
+RELEVANCY_THRESHOLD = 0.1
 
 # Ensure job DB exists locally
 def download_jobs_db():
@@ -34,24 +38,6 @@ def download_faiss_index():
     if not os.path.exists(FAISS_INDEX_PATH):
         st.info("Downloading FAISS index...")
         gdown.download(FAISS_GDRIVE_URL, FAISS_INDEX_PATH, quiet=False)
-
-def ensure_embedding_metadata_table_exists():
-    conn = None
-    try:
-        conn = sqlite3.connect(JOBS_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS embedding_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-        conn.commit()
-    except sqlite3.Error as e:
-        st.error(f"Database error during schema check: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 # Load hierarchical structure from majors.db
 @st.cache_data
@@ -67,66 +53,20 @@ def load_major_hierarchy():
 # Load embedding model
 @st.cache_resource
 def load_embedding_model():
-    return SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
-# Generate embeddings for job postings and build FAISS index
+# Load FAISS index and job ID map
 @st.cache_resource
-def build_job_embeddings_and_faiss_index(current_job_count, embedding_model_name_param):
-    model = load_embedding_model()
+def load_faiss_index_and_id_map():
+    download_faiss_index() # Ensure index is downloaded before loading
+    index = faiss.read_index(FAISS_INDEX_PATH)
     
     conn = sqlite3.connect(JOBS_DB_PATH)
-    cursor = conn.cursor()
-
-    # Get stored metadata
-    stored_embedding_model = cursor.execute("SELECT value FROM embedding_metadata WHERE key = 'embedding_model';").fetchone()
-    stored_total_jobs_at_embedding_time = cursor.execute("SELECT value FROM embedding_metadata WHERE key = 'total_jobs_at_embedding_time';").fetchone()
-
-    stored_embedding_model = stored_embedding_model[0] if stored_embedding_model else None
-    stored_total_jobs_at_embedding_time = int(stored_total_jobs_at_embedding_time[0]) if stored_total_jobs_at_embedding_time else 0
-
-    regenerate_embeddings = False
-    if (not os.path.exists(FAISS_INDEX_PATH) or
-        stored_embedding_model != embedding_model_name_param or
-        stored_total_jobs_at_embedding_time < current_job_count):
-        regenerate_embeddings = True
-
-    if regenerate_embeddings:
-        df = pd.read_sql("SELECT job_id, title, description, skills_desc FROM job_postings;", conn)
-
-        # Combine relevant text fields for embedding
-        df['combined_text'] = df['title'].fillna('') + " " + \
-                              df['description'].fillna('') + " " + \
-                              df['skills_desc'].fillna('')
-        
-        # Generate embeddings
-        embeddings = model.encode(df['combined_text'].tolist(), show_progress_bar=True)
-        embeddings = np.array(embeddings).astype('float32')
-
-        # Normalize embeddings for cosine similarity (inner product)
-        faiss.normalize_L2(embeddings)
-
-        # Build FAISS index
-        dimension = embeddings.shape[1]
-        index = faiss.IndexFlatIP(dimension) # Inner Product for cosine similarity
-        index.add(embeddings)
-
-        # Save FAISS index to disk
-        faiss.write_index(index, FAISS_INDEX_PATH)
-
-        # Update metadata
-        cursor.execute("REPLACE INTO embedding_metadata (key, value) VALUES (?, ?);", ('embedding_model', embedding_model_name_param))
-        cursor.execute("REPLACE INTO embedding_metadata (key, value) VALUES (?, ?);", ('total_jobs_at_embedding_time', str(current_job_count)))
-        conn.commit()
-    else:
-        index = faiss.read_index(FAISS_INDEX_PATH)
-        df = pd.read_sql("SELECT job_id, title, description, skills_desc FROM job_postings;", conn) # Still need df for id_map
-
+    df = pd.read_sql("SELECT job_id FROM job_postings;", conn)
     conn.close()
 
-    # Create a mapping from FAISS index ID to original job ID
     id_map = {i: job_id for i, job_id in enumerate(df['job_id'].tolist())}
-    
-    return index, id_map, df[['job_id', 'title', 'description', 'skills_desc']] # Return df for later use
+    return index, id_map
 
 # Generate embedding for a major
 @st.cache_data
@@ -134,7 +74,7 @@ def get_major_embedding(major_name):
     model = load_embedding_model()
     major_embedding = model.encode(major_name)
     major_embedding = np.array(major_embedding).astype('float32')
-    faiss.normalize_L2(major_embedding.reshape(1, -1)) # Normalize for cosine similarity
+    faiss.normalize_L2(major_embedding.reshape(1, -1))
     return major_embedding
 
 # Perform semantic search using FAISS
@@ -144,7 +84,7 @@ def perform_semantic_search(major_embedding, _faiss_index, job_id_map, k_results
     
     results = []
     for i, score in zip(I[0], D[0]):
-        if i != -1: # Ensure valid index
+        if i != -1:
             job_id = job_id_map[i]
             results.append({'job_id': job_id, 'semantic_score': float(score)})
     return pd.DataFrame(results)
@@ -190,9 +130,6 @@ st.title("🎓 Major-to-Job Postings Explorer")
 download_jobs_db()
 download_faiss_index()
 
-# Ensure embedding metadata table exists
-ensure_embedding_metadata_table_exists()
-
 # Load hierarchy
 hierarchy_df = load_major_hierarchy()
 
@@ -208,7 +145,7 @@ if selected_school:
         majors_df = hierarchy_df[
             (hierarchy_df["School"] == selected_school) &
             (hierarchy_df["Department"] == selected_department)
-        ].copy() # Use .copy() to avoid SettingWithCopyWarning
+        ].copy()
 
         # Create a display string for the selectbox
         majors_df["Display"] = majors_df["Major"] + " (" + majors_df["DegreeLevel"] + ")"
@@ -229,37 +166,28 @@ if selected_school:
         if search_button and selected_major:
             # Reset pagination when a new search is initiated
             st.session_state.current_page = 0
-            st.session_state.last_selected_major = selected_major # Store the major that triggered the search
+            st.session_state.last_selected_major = selected_major
 
-            # Get current job count for cache busting
-            conn = sqlite3.connect(JOBS_DB_PATH)
-            cursor = conn.cursor()
-            current_job_count = cursor.execute("SELECT COUNT(*) FROM job_postings;").fetchone()[0]
-            conn.close()
-
-            with st.spinner("Preparing semantic data..."):
-                faiss_index, job_id_map, all_jobs_df = build_job_embeddings_and_faiss_index(current_job_count, EMBEDDING_MODEL_NAME)
+            with st.spinner("Loading semantic data..."):
+                faiss_index, job_id_map = load_faiss_index_and_id_map()
             
             with st.spinner(f"Generating embedding for {selected_major}..."):
                 major_embedding = get_major_embedding(selected_major)
 
             with st.spinner("Performing semantic search..."):
-                # Search for more results than MAX_JOB_POSTINGS_FETCH to allow for filtering by relevancy_threshold
                 semantic_results = perform_semantic_search(major_embedding, faiss_index, job_id_map, MAX_JOB_POSTINGS_FETCH * 2)
-                
-                # Fetch the actual job postings using the IDs and apply relevancy filter
-                st.session_state.search_results = get_jobs_with_semantic_scores(semantic_results) # Store results in session state
+                st.session_state.search_results = get_jobs_with_semantic_scores(semantic_results)
 
             if not st.session_state.search_results.empty:
                 st.success(f"Search complete! Found {len(st.session_state.search_results)} relevant job postings.")
             else:
                 st.warning("No relevant job postings found for this major.")
-                st.session_state.search_results = pd.DataFrame() # Clear results if no keywords
+                st.session_state.search_results = pd.DataFrame()
 
         # Display results if they exist in session state
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             results = st.session_state.search_results
-            current_major_display = st.session_state.get('last_selected_major', 'Selected Major') # Use stored major for display
+            current_major_display = st.session_state.get('last_selected_major', 'Selected Major')
 
             st.subheader(f"Job Postings for: {current_major_display}")
             st.write("Results are ranked by semantic relevancy.")
@@ -267,7 +195,7 @@ if selected_school:
             # Pagination setup
             JOBS_PER_PAGE = 10
             if 'current_page' not in st.session_state:
-                st.session_state.current_page = 0 # Initialize if not already set (e.g., first load)
+                st.session_state.current_page = 0
 
             total_jobs = len(results)
             total_pages = (total_jobs + JOBS_PER_PAGE - 1) // JOBS_PER_PAGE
@@ -350,9 +278,7 @@ if selected_school:
                             st.markdown(f"**Application URL:** [Link]({row['application_url']})")
 
                         st.write(f"**Views:** {row['views']} | **Applies:** {row['applies']}")
-                    st.markdown("---") # Separator for readability
-
-            # Display navigation buttons (Top)
+                    st.markdown("---")
             nav_cols_top = st.columns([1, 1, 1], vertical_alignment='center', gap='large', border=True)
             with nav_cols_top[0]:
                 if st.session_state.current_page > 0:
@@ -365,7 +291,6 @@ if selected_school:
                         st.session_state.current_page = 0
                         st.rerun()
             with nav_cols_top[1]:
-                # Page number selector (Top)
                 page_options = [i + 1 for i in range(total_pages)]
                 selected_page_display_top = st.selectbox(
                     "Go to Page:",
@@ -373,7 +298,6 @@ if selected_school:
                     index=st.session_state.current_page,
                     key="page_selector_top"
                 )
-                # Update current_page if selection changes
                 if selected_page_display_top - 1 != st.session_state.current_page:
                     st.session_state.current_page = selected_page_display_top - 1
                     st.rerun()
