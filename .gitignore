@@ -167,3 +167,5 @@ test-scripts/
 data/jobs.db
 data/job_embeddings.faiss
 venv
+requirements_local.txt
+update_faiss_index.py
