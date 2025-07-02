@@ -3,11 +3,6 @@ import sqlite3
 import pandas as pd
 import gdown
 import os
-import streamlit as st
-import sqlite3
-import pandas as pd
-import gdown
-import os
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
