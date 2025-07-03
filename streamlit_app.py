@@ -6,6 +6,7 @@ import os
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+from wordcloud import WordCloud
 
 # Constants
 MAJOR_DB_PATH = "data/majors.db"
@@ -121,7 +122,11 @@ def query_jobs(sql_query, params):
     return df
 
 # Streamlit UI
-st.set_page_config(page_title="Major-to-Job Explorer", layout="wide")
+st.set_page_config(
+    page_title="Major-to-Job Explorer", 
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 st.title("🎓 Major-to-Job Postings Explorer")
 
 # Download job DB and FAISS index if needed
@@ -187,6 +192,84 @@ if selected_school:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             results = st.session_state.search_results
             current_major_display = st.session_state.get('last_selected_major', 'Selected Major')
+            
+            # ----------Beginning of "Visualization" section-----------------
+            
+            
+            viz = st.sidebar.selectbox(
+                "Choose a visualization",
+                ["None", "Word Cloud", "Top-10 Bar Chart", "Treemap", "Bubble Chart"],
+                index = 1
+            )
+            if viz == "None":
+                st.info("No visualization selected. Use the sidebar to choose one.")
+            else:
+                st.header("🔍 At-a-Glance: Top Job Roles")
+                
+                if viz == "Word Cloud":
+                    from wordcloud import WordCloud
+                    freqs = {title: int(score*100) for title, score in zip(results.title, results.relevancy_score)}
+                    wc = WordCloud(width=800, height=400, background_color="white", max_words=100)\
+                            .generate_from_frequencies(freqs)
+                    st.image(wc.to_array(), use_container_width=True)
+
+                elif viz == "Top-10 Bar Chart":
+                    import altair as alt
+                    # Group by title
+                    df = (results
+                        .groupby("title")
+                        .agg(count=("title","size"), avg_rel=("relevancy_score","mean"))
+                        .reset_index()
+                        .sort_values("count", ascending=False)
+                        .head(10))
+                    chart = alt.Chart(df).mark_bar().encode(
+                        x=alt.X("count:Q", title="Count"),
+                        y=alt.Y("title:N", sort="-x", title="Job Title")
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                elif viz == "Treemap":
+                    import plotly.express as px
+                    df = (results
+                        .groupby("title")
+                        .agg(count=("title","size"), avg_rel=("relevancy_score","mean"))
+                        .reset_index())
+                    fig = px.treemap(
+                        df, path=["title"], values="count", color="avg_rel",
+                        color_continuous_scale="Viridis",
+                        title="Jobs Treemap (size=count, color=avg relevancy)"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                elif viz == "Bubble Chart":
+                    import altair as alt
+                    # Tokenize into keywords (simple split on spaces/punctuation)
+                    from collections import defaultdict
+                    kw_data = defaultdict(lambda: {"count":0, "sum_rel":0.0})
+                    for title, rel in zip(results.title, results.relevancy_score):
+                        for w in title.replace("/", " ").split():
+                            w_clean = w.lower().strip("-–(),")
+                            if len(w_clean)>2:
+                                kw_data[w_clean]["count"] += 1
+                                kw_data[w_clean]["sum_rel"] += rel
+                    df_kw = (
+                        pd.DataFrame([
+                            {"keyword":k, "count":v["count"], "avg_rel": v["sum_rel"]/v["count"]}
+                            for k,v in kw_data.items()
+                        ])
+                        .sort_values("count", ascending=False)
+                        .head(50)
+                    )
+                    chart = alt.Chart(df_kw).mark_circle().encode(
+                        x="count:Q",
+                        y="avg_rel:Q",
+                        size="count:Q",
+                        tooltip=["keyword","count","avg_rel"]
+                    ).properties(title="Keyword Bubble Chart")
+                    st.altair_chart(chart, use_container_width=True)
+                # -----------------End of "Visualization" section-----------------
+
+
 
             st.subheader(f"Job Postings for: {current_major_display}")
             st.write("Results are ranked by semantic relevancy.")
