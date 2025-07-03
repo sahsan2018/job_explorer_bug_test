@@ -97,8 +97,17 @@ def get_jobs_with_semantic_scores(job_ids_with_scores):
     # Calculate relevancy score
     merged_df['relevancy_score'] = merged_df['semantic_score'] * SEMANTIC_SCORE_SCALE
     
-    # Filter by relevancy threshold and limit
-    filtered_df = merged_df[merged_df['relevancy_score'] > RELEVANCY_THRESHOLD]
+    # Calculate the 25th percentile of relevancy scores
+    # Only calculate if there are enough scores to make sense, otherwise use a default low threshold
+    if not merged_df.empty and len(merged_df) >= 4: # Ensure at least 4 elements for 25th percentile
+        percentile_threshold = np.percentile(merged_df['relevancy_score'], 25)
+    else:
+        percentile_threshold = 0.0 # Fallback to a very low threshold if not enough data
+
+    # Filter by the dynamic percentile threshold
+    filtered_df = merged_df[merged_df['relevancy_score'] >= percentile_threshold]
+    
+    # Sort by relevancy score and limit to MAX_JOB_POSTINGS_FETCH
     sorted_df = filtered_df.sort_values(by='relevancy_score', ascending=False)
     
     return sorted_df.head(MAX_JOB_POSTINGS_FETCH)
@@ -164,7 +173,8 @@ if selected_school:
                 major_embedding = get_major_embedding(selected_major)
 
             with st.spinner("Performing semantic search..."):
-                semantic_results = perform_semantic_search(major_embedding, faiss_index, MAX_JOB_POSTINGS_FETCH * 2)
+                # Fetch more results initially to allow for percentile filtering
+                semantic_results = perform_semantic_search(major_embedding, faiss_index, MAX_JOB_POSTINGS_FETCH * 4)
                 st.session_state.search_results = get_jobs_with_semantic_scores(semantic_results)
 
             if not st.session_state.search_results.empty:
