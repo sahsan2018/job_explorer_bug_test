@@ -7,6 +7,9 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 from wordcloud import WordCloud
+import altair as alt
+import textwrap
+import plotly.express as px
 
 # Constants
 MAJOR_DB_PATH = "data/majors.db"
@@ -198,8 +201,8 @@ if selected_school:
             
             viz = st.sidebar.selectbox(
                 "Choose a visualization",
-                ["None", "Word Cloud", "Top-10 Bar Chart", "Treemap", "Bubble Chart"],
-                index = 1
+                ["None", "Word Cloud", "Top-10 Bar Chart", "Treemap"],
+                index = 2
             )
             if viz == "None":
                 st.info("No visualization selected. Use the sidebar to choose one.")
@@ -207,29 +210,61 @@ if selected_school:
                 st.header("🔍 At-a-Glance: Top Job Roles")
                 
                 if viz == "Word Cloud":
-                    from wordcloud import WordCloud
                     freqs = {title: int(score*100) for title, score in zip(results.title, results.relevancy_score)}
                     wc = WordCloud(width=800, height=400, background_color="white", max_words=100)\
                             .generate_from_frequencies(freqs)
                     st.image(wc.to_array(), use_container_width=True)
 
                 elif viz == "Top-10 Bar Chart":
-                    import altair as alt
-                    # Group by title
-                    df = (results
+                    # let user pick sorting metric
+                    metric = st.sidebar.radio("Rank by:", ["Count", "Avg Relevancy"])
+                    sort_field = "count" if metric == "Count" else "avg_rel"
+
+                    # prepare the aggregated DataFrame
+                    df = (
+                        results
                         .groupby("title")
-                        .agg(count=("title","size"), avg_rel=("relevancy_score","mean"))
+                        .agg(count=("title", "size"), avg_rel=("relevancy_score", "mean"))
                         .reset_index()
-                        .sort_values("count", ascending=False)
-                        .head(10))
-                    chart = alt.Chart(df).mark_bar().encode(
-                        x=alt.X("count:Q", title="Count"),
-                        y=alt.Y("title:N", sort="-x", title="Job Title")
+                        .sort_values(sort_field, ascending=False)
+                        .head(10)
                     )
+
+                    # build the bar chart
+                    chart = (
+                        alt.Chart(df)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(f"{sort_field}:Q", title=metric),
+                            y=alt.Y("title:N", sort='-x', title="Job Title"),
+                            tooltip=["title", "count", "avg_rel"]
+                        )
+                        .properties(title=f"Top-10 Job Titles by {metric}", height=400)
+                    )
+
                     st.altair_chart(chart, use_container_width=True)
 
+                    # accessibility: show the raw data in a table
+                    with st.expander("View Data Table"):
+                        # 1) Build display DataFrame
+                        disp = (
+                            df.reset_index(drop=True)
+                            .assign(
+                                Rank=lambda d: d.index+1,
+                                Count=lambda d: d["count"],
+                                **{"Avg. Relevancy": lambda d: d["avg_rel"].round(1)}
+                            )
+                            .loc[:, ["Rank","title","Count","Avg. Relevancy"]]
+                            .rename(columns={"title":"Job Title"})
+                        )
+
+                        # 2) Optional context for screen readers
+                        st.write("Table: Top job roles ranked by your chosen metric.")
+
+                        # 3) Render as a static table
+                        st.table(disp)
+
                 elif viz == "Treemap":
-                    import plotly.express as px
                     df = (results
                         .groupby("title")
                         .agg(count=("title","size"), avg_rel=("relevancy_score","mean"))
@@ -241,32 +276,6 @@ if selected_school:
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
-                elif viz == "Bubble Chart":
-                    import altair as alt
-                    # Tokenize into keywords (simple split on spaces/punctuation)
-                    from collections import defaultdict
-                    kw_data = defaultdict(lambda: {"count":0, "sum_rel":0.0})
-                    for title, rel in zip(results.title, results.relevancy_score):
-                        for w in title.replace("/", " ").split():
-                            w_clean = w.lower().strip("-–(),")
-                            if len(w_clean)>2:
-                                kw_data[w_clean]["count"] += 1
-                                kw_data[w_clean]["sum_rel"] += rel
-                    df_kw = (
-                        pd.DataFrame([
-                            {"keyword":k, "count":v["count"], "avg_rel": v["sum_rel"]/v["count"]}
-                            for k,v in kw_data.items()
-                        ])
-                        .sort_values("count", ascending=False)
-                        .head(50)
-                    )
-                    chart = alt.Chart(df_kw).mark_circle().encode(
-                        x="count:Q",
-                        y="avg_rel:Q",
-                        size="count:Q",
-                        tooltip=["keyword","count","avg_rel"]
-                    ).properties(title="Keyword Bubble Chart")
-                    st.altair_chart(chart, use_container_width=True)
                 # -----------------End of "Visualization" section-----------------
 
 
