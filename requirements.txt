@@ -5,4 +5,4 @@ sentence-transformers
 faiss-cpu
 wordcloud
 plotly
-sklearn
+scikit-learn
