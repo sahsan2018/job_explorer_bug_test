@@ -10,6 +10,7 @@ from wordcloud import WordCloud
 import altair as alt
 import textwrap
 import plotly.express as px
+from sklearn.cluster import KMeans
 
 # Constants
 MAJOR_DB_PATH = "data/majors.db"
@@ -196,9 +197,33 @@ if selected_school:
             results = st.session_state.search_results
             current_major_display = st.session_state.get('last_selected_major', 'Selected Major')
             
+            # ── Dynamic Role Clustering ──
+            # 1) Re-encode titles into embeddings
+            model  = load_embedding_model()
+            titles = results["title"].tolist()
+            embs   = model.encode(titles, convert_to_numpy=True)   # ← this bit was missing
+
+            # 2) Cluster into up to 8 roles
+            n_roles = min(8, len(titles))
+            kmeans  = KMeans(n_clusters=n_roles, random_state=0).fit(embs)
+            results["cluster_id"] = kmeans.labels_
+
+            # 3) Build human-readable names
+            centroids = kmeans.cluster_centers_
+            role_names = []
+            for cid, center in enumerate(centroids):
+                idxs = np.where(results["cluster_id"] == cid)[0]      # positional indices
+                cluster_embs = embs[idxs]
+                # get the positional index of the closest embedding
+                winner_pos = idxs[np.argmin(np.linalg.norm(cluster_embs - center, axis=1))]
+                # use iloc to fetch by positional index
+                role_names.append(results.iloc[winner_pos]["title"])
+
+            # 4) Map into new column
+            cluster_to_role = {i: name for i, name in enumerate(role_names)}
+            results["role_name"] = results["cluster_id"].map(cluster_to_role)
+            
             # ----------Beginning of "Visualization" section-----------------
-            
-            
             viz = st.sidebar.selectbox(
                 "Choose a visualization",
                 ["None", "Word Cloud", "Top-10 Bar Chart", "Treemap"],
@@ -210,72 +235,119 @@ if selected_school:
                 st.header("🔍 At-a-Glance: Top Job Roles")
                 
                 if viz == "Word Cloud":
-                    freqs = {title: int(score*100) for title, score in zip(results.title, results.relevancy_score)}
-                    wc = WordCloud(width=800, height=400, background_color="white", max_words=100)\
-                            .generate_from_frequencies(freqs)
+                    # Sum relevancy by role
+                    role_weights = (
+                        results
+                        .groupby("role_name")["relevancy_score"]
+                        .sum()
+                        .to_dict()
+                    )
+
+                    # Generate cloud
+                    wc = WordCloud(
+                        width=800, height=400,
+                        background_color="white",
+                        max_words=50
+                    ).generate_from_frequencies({r: int(s*100) for r, s in role_weights.items()})
+
+                    st.subheader("Role-Level Word Cloud")
                     st.image(wc.to_array(), use_container_width=True)
 
                 elif viz == "Top-10 Bar Chart":
-                    # let user pick sorting metric
+                    # Let user pick metric
                     metric = st.sidebar.radio("Rank by:", ["Count", "Avg Relevancy"])
-                    sort_field = "count" if metric == "Count" else "avg_rel"
+                    field  = "count" if metric=="Count" else "avg_rel"
 
-                    # prepare the aggregated DataFrame
-                    df = (
+                    # Aggregate on role_name
+                    df_role = (
                         results
-                        .groupby("title")
-                        .agg(count=("title", "size"), avg_rel=("relevancy_score", "mean"))
+                        .groupby("role_name")
+                        .agg(count=("role_name","size"), avg_rel=("relevancy_score","mean"))
                         .reset_index()
-                        .sort_values(sort_field, ascending=False)
+                        .sort_values(field, ascending=False)
                         .head(10)
                     )
 
-                    # build the bar chart
                     chart = (
-                        alt.Chart(df)
+                        alt.Chart(df_role)
                         .mark_bar()
                         .encode(
-                            x=alt.X(f"{sort_field}:Q", title=metric),
-                            y=alt.Y("title:N", sort='-x', title="Job Title"),
-                            tooltip=["title", "count", "avg_rel"]
+                            x=alt.X(f"{field}:Q", title=metric),
+                            y=alt.Y("role_name:N", sort='-x', title="Role"),
+                            tooltip=["role_name","count","avg_rel"]
                         )
-                        .properties(title=f"Top-10 Job Titles by {metric}", height=400)
+                        .properties(title=f"Top-10 Roles by {metric}", height=400)
                     )
 
                     st.altair_chart(chart, use_container_width=True)
 
-                    # accessibility: show the raw data in a table
                     with st.expander("View Data Table"):
-                        # 1) Build display DataFrame
-                        disp = (
-                            df.reset_index(drop=True)
-                            .assign(
-                                Rank=lambda d: d.index+1,
-                                Count=lambda d: d["count"],
-                                **{"Avg. Relevancy": lambda d: d["avg_rel"].round(1)}
-                            )
-                            .loc[:, ["Rank","title","Count","Avg. Relevancy"]]
-                            .rename(columns={"title":"Job Title"})
+                        st.table(
+                            df_role.rename(columns={
+                            "role_name":"Role","count":"Count","avg_rel":"Avg. Relevancy"
+                            })
                         )
 
-                        # 2) Optional context for screen readers
-                        st.write("Table: Top job roles ranked by your chosen metric.")
-
-                        # 3) Render as a static table
-                        st.table(disp)
-
                 elif viz == "Treemap":
-                    df = (results
-                        .groupby("title")
-                        .agg(count=("title","size"), avg_rel=("relevancy_score","mean"))
-                        .reset_index())
-                    fig = px.treemap(
-                        df, path=["title"], values="count", color="avg_rel",
-                        color_continuous_scale="Viridis",
-                        title="Jobs Treemap (size=count, color=avg relevancy)"
+                    # 1) Prepare a two-level DataFrame
+                    df_tree = (
+                        results
+                        .groupby(["role_name", "title"])
+                        .agg(
+                            count=("title", "size"),
+                            avg_rel=("relevancy_score", "mean")
+                        )
+                        .reset_index()
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 2) Prune children: keep top 5 titles per role, aggregate the rest
+                    def prune_children(df, top_n=5):
+                        pieces = []
+                        for role, grp in df.groupby("role_name"):
+                            # pick the top N by count
+                            top = grp.nlargest(top_n, "count")
+                            rest = grp.drop(top.index)
+                            pieces.append(top)
+                            if not rest.empty:
+                                pieces.append(pd.DataFrame({
+                                    "role_name": [role],
+                                    "title":       ["Other Titles"],
+                                    "count":       [rest["count"].sum()],
+                                    "avg_rel":     [rest["avg_rel"].mean()]
+                                }))
+                        return pd.concat(pieces, ignore_index=True)
+                    
+                    # apply pruning
+                    df_tree = prune_children(df_tree, top_n=5)
 
+                    # 3) Build a treemap showing both levels at once
+                    fig = px.treemap(
+                        df_tree,
+                        path=["role_name", "title"],     # level-0=role_name, level-1=title
+                        values="count",
+                        color="avg_rel",
+                        color_continuous_scale="Viridis",
+                        hover_data=["count", "avg_rel"],
+                        title="Jobs Treemap (Roles → Titles)",
+                        maxdepth=2                       # always draw both levels
+                    )
+
+                    # 4) Improve padding & fonts for clarity
+                    fig.update_traces(
+                        tiling=dict(pad=3),             # inner padding
+                        outsidetextfont=dict(size=18, color="white"),  # role labels
+                        insidetextfont=dict(size=12, color="white"),   # title labels
+                        textinfo="label+value"          # show name + count on each rectangle
+                    )
+
+                    # 5) Add breathing room and a clear colorbar title
+                    fig.update_layout(
+                        margin=dict(t=50, l=25, r=25, b=25),
+                        coloraxis_colorbar=dict(title="Avg. Relevancy")
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+                    
                 # -----------------End of "Visualization" section-----------------
 
 
