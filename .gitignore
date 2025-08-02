@@ -166,6 +166,8 @@ test-scripts/
 .streamlit/secrets.toml
 data/jobs.db
 data/job_embeddings.faiss
+data/jobs.db-journal
 venv
 requirements_local.txt
 update_faiss_index.py
+build_major_descriptions.py

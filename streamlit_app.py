@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import gdown
 import os
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import faiss
 import numpy as np
 from wordcloud import WordCloud
@@ -11,6 +11,7 @@ import altair as alt
 import textwrap
 import plotly.express as px
 from sklearn.cluster import KMeans
+import torch
 
 # Constants
 MAJOR_DB_PATH = "data/majors.db"
@@ -19,6 +20,8 @@ JOBS_DB_PATH = "data/jobs.db"
 FAISS_INDEX_PATH = "data/job_embeddings.faiss"
 JOBS_GDRIVE_URL = st.secrets["JOB_URL"]
 FAISS_GDRIVE_URL = st.secrets["FAISS_URL"]
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+dimensions=384
 
 # New Constant for job posting limit
 MAX_JOB_POSTINGS_FETCH = 100
@@ -53,7 +56,8 @@ def load_major_hierarchy():
 # Load embedding model
 @st.cache_resource
 def load_embedding_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    return SentenceTransformer('mixedbread-ai/mxbai-embed-xsmall-v1', device=DEVICE, truncate_dim=dimensions)
+
 
 # Load FAISS index and job ID map
 @st.cache_resource
@@ -64,12 +68,58 @@ def load_faiss_index():
 
 # Generate embedding for a major
 @st.cache_data
-def get_major_embedding(major_name):
+def get_major_embedding(major_display: str):
+    """
+    major_display is of the form "Major Name (DegreeLevel)".
+    We parse out both pieces, lookup description, and encode all three.
+    """
     model = load_embedding_model()
-    major_embedding = model.encode(major_name)
-    major_embedding = np.array(major_embedding).astype('float32')
-    faiss.normalize_L2(major_embedding.reshape(1, -1))
-    return major_embedding
+
+    # 1) parse the display into name & degree
+    if "(" in major_display and major_display.endswith(")"):
+        name, degree = major_display.rsplit("(", 1)
+        name = name.strip()
+        degree = degree[:-1]  # drop trailing ")"
+    else:
+        name, degree = major_display, ""
+
+    # 2) fetch the rich description from majors.db
+    conn = sqlite3.connect(MAJOR_DB_PATH)
+    row = conn.execute(
+        "SELECT description FROM majors WHERE [Major Name]=? AND [Degree Level]=?",
+        (name, degree)
+    ).fetchone()
+    conn.close()
+    desc = row[0] if row and row[0] else ""
+
+    # 3) build the full prompt
+    full_text = f"{name} ({degree}). {desc}"
+
+    # 4) embed
+    emb = model.encode(full_text, prompt_name="query", convert_to_numpy=True)
+    emb = np.array(emb, dtype='float32')
+    faiss.normalize_L2(emb.reshape(1, -1))
+    return emb
+
+@st.cache_data
+def get_major_query_text(major_display: str) -> str:
+    # parse out name & degree exactly like get_major_embedding
+    if "(" in major_display and major_display.endswith(")"):
+        name, degree = major_display.rsplit("(", 1)
+        name = name.strip()
+        degree = degree[:-1]
+    else:
+        name, degree = major_display, ""
+    # fetch the same description
+    conn = sqlite3.connect(MAJOR_DB_PATH)
+    row = conn.execute(
+        "SELECT description FROM majors WHERE [Major Name]=? AND [Degree Level]=?",
+        (name, degree)
+    ).fetchone()
+    conn.close()
+    desc = row[0] if row and row[0] else ""
+    # rebuild the exact query text
+    return f"{name} ({degree}). {desc}"
 
 # Perform semantic search using FAISS
 @st.cache_data
@@ -179,7 +229,9 @@ if selected_school:
                 faiss_index = load_faiss_index()
             
             with st.spinner(f"Generating embedding for {selected_major}..."):
-                major_embedding = get_major_embedding(selected_major)
+                # use the “Major Name (DegreeLevel)” that the user selected
+                major_embedding = get_major_embedding(selected_major_display)
+
 
             with st.spinner("Performing semantic search..."):
                 # Fetch more results initially to allow for percentile filtering
@@ -196,12 +248,30 @@ if selected_school:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             results = st.session_state.search_results
             current_major_display = st.session_state.get('last_selected_major', 'Selected Major')
+
+            # ── Cross‐Encoder Rerank using major description ──
+            cross_encoder  = CrossEncoder("mixedbread-ai/mxbai-rerank-xsmall-v1")
+
+            # 1) Grab the exact same query text we used for FAISS
+            query_text = get_major_query_text(selected_major_display)
+
+            # 2) Build (query_text, job_desc) pairs
+            pairs = [(query_text, jd) for jd in results["description"].tolist()]
+
+            # 3) Cross-encode as before
+            cross_scores = cross_encoder.predict(pairs)
+            results["cross_score"] = cross_scores
+            results = results.sort_values("cross_score", ascending=False).reset_index(drop=True)
+
+            # 4) (Optional) Truncate to top‐N for display
+            TOP_N = st.sidebar.slider("Results to show", 5, 100, 50)
+            results = results.head(TOP_N).copy()
             
             # ── Dynamic Role Clustering ──
             # 1) Re-encode titles into embeddings
             model  = load_embedding_model()
             titles = results["title"].tolist()
-            embs   = model.encode(titles, convert_to_numpy=True)   # ← this bit was missing
+            embs   = model.encode(titles, convert_to_numpy=True)  
 
             # 2) Cluster into up to 8 roles
             n_roles = min(8, len(titles))
