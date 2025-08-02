@@ -11,7 +11,7 @@ import altair as alt
 import textwrap
 import plotly.express as px
 from sklearn.cluster import KMeans
-# import torch
+import torch
 
 # Constants
 MAJOR_DB_PATH = "data/majors.db"
@@ -20,8 +20,7 @@ JOBS_DB_PATH = "data/jobs.db"
 FAISS_INDEX_PATH = "data/job_embeddings.faiss"
 JOBS_GDRIVE_URL = st.secrets["JOB_URL"]
 FAISS_GDRIVE_URL = st.secrets["FAISS_URL"]
-# DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-DEVICE = 'cpu'
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 dimensions=384
 
 # New Constant for job posting limit
