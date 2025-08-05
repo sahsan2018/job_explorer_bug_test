@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import gdown
 import os
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import faiss
 import numpy as np
 from wordcloud import WordCloud
@@ -244,6 +244,24 @@ if selected_school:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             results = st.session_state.search_results
             current_major_display = st.session_state.get('last_selected_major', 'Selected Major')
+            
+            # ── Cross‐Encoder Rerank using major description ──
+            cross_encoder  = CrossEncoder("mixedbread-ai/mxbai-rerank-xsmall-v1")
+
+            # 1) Grab the exact same query text we used for FAISS
+            query_text = get_major_query_text(selected_major_display)
+
+            # 2) Build (query_text, job_desc) pairs
+            pairs = [(query_text, jd) for jd in results["description"].tolist()]
+
+            # 3) Cross-encode as before
+            cross_scores = cross_encoder.predict(pairs)
+            results["cross_score"] = cross_scores
+            results = results.sort_values("cross_score", ascending=False).reset_index(drop=True)
+
+            # 4) (Optional) Truncate to top‐N for display
+            TOP_N = st.sidebar.slider("Results to show", 5, 100, 50)
+            results = results.head(TOP_N).copy()
             
             # ── Dynamic Role Clustering ──
             # 1) Re-encode titles into embeddings
