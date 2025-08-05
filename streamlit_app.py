@@ -65,12 +65,58 @@ def load_faiss_index():
 
 # Generate embedding for a major
 @st.cache_data
-def get_major_embedding(major_name):
+def get_major_embedding(major_display: str):
+    """
+    major_display is of the form "Major Name (DegreeLevel)".
+    We parse out both pieces, lookup description, and encode all three.
+    """
     model = load_embedding_model()
-    major_embedding = model.encode(major_name)
-    major_embedding = np.array(major_embedding).astype('float32')
-    faiss.normalize_L2(major_embedding.reshape(1, -1))
-    return major_embedding
+
+    # 1) parse the display into name & degree
+    if "(" in major_display and major_display.endswith(")"):
+        name, degree = major_display.rsplit("(", 1)
+        name = name.strip()
+        degree = degree[:-1]  # drop trailing ")"
+    else:
+        name, degree = major_display, ""
+
+    # 2) fetch the rich description from majors.db
+    conn = sqlite3.connect(MAJOR_DB_PATH)
+    row = conn.execute(
+        "SELECT description FROM majors WHERE [Major Name]=? AND [Degree Level]=?",
+        (name, degree)
+    ).fetchone()
+    conn.close()
+    desc = row[0] if row and row[0] else ""
+
+    # 3) build the full prompt
+    full_text = f"{name} ({degree}). {desc}"
+
+    # 4) embed
+    emb = model.encode(full_text, prompt_name="query", convert_to_numpy=True)
+    emb = np.array(emb, dtype='float32')
+    faiss.normalize_L2(emb.reshape(1, -1))
+    return emb
+
+@st.cache_data
+def get_major_query_text(major_display: str) -> str:
+    # parse out name & degree exactly like get_major_embedding
+    if "(" in major_display and major_display.endswith(")"):
+        name, degree = major_display.rsplit("(", 1)
+        name = name.strip()
+        degree = degree[:-1]
+    else:
+        name, degree = major_display, ""
+    # fetch the same description
+    conn = sqlite3.connect(MAJOR_DB_PATH)
+    row = conn.execute(
+        "SELECT description FROM majors WHERE [Major Name]=? AND [Degree Level]=?",
+        (name, degree)
+    ).fetchone()
+    conn.close()
+    desc = row[0] if row and row[0] else ""
+    # rebuild the exact query text
+    return f"{name} ({degree}). {desc}"
 
 # Perform semantic search using FAISS
 @st.cache_data
@@ -180,7 +226,8 @@ if selected_school:
                 faiss_index = load_faiss_index()
             
             with st.spinner(f"Generating embedding for {selected_major}..."):
-                major_embedding = get_major_embedding(selected_major)
+                # use the “Major Name (DegreeLevel)” that the user selected
+                major_embedding = get_major_embedding(selected_major_display)
 
             with st.spinner("Performing semantic search..."):
                 # Fetch more results initially to allow for percentile filtering
