@@ -169,3 +169,5 @@ data/job_embeddings.faiss
 venv
 requirements_local.txt
 update_faiss_index.py
+build_major_descriptions.py
+embeddings_bugs.faiss

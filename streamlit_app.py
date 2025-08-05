@@ -16,7 +16,7 @@ from sklearn.cluster import KMeans
 MAJOR_DB_PATH = "data/majors.db"
 MAP_DB_PATH = "data/map.db"
 JOBS_DB_PATH = "data/jobs.db"
-FAISS_INDEX_PATH = "data/job_embeddings.faiss"
+FAISS_INDEX_PATH = "data/embeddings_bugs.faiss"
 JOBS_GDRIVE_URL = st.secrets["JOB_URL"]
 FAISS_GDRIVE_URL = st.secrets["FAISS_URL"]
 
