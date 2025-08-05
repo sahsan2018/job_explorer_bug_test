@@ -19,6 +19,7 @@ JOBS_DB_PATH = "data/jobs.db"
 FAISS_INDEX_PATH = "data/embeddings_bugs.faiss"
 JOBS_GDRIVE_URL = st.secrets["JOB_URL"]
 FAISS_GDRIVE_URL = st.secrets["FAISS_URL"]
+dimensions=384
 
 # New Constant for job posting limit
 MAX_JOB_POSTINGS_FETCH = 100
@@ -53,7 +54,7 @@ def load_major_hierarchy():
 # Load embedding model
 @st.cache_resource
 def load_embedding_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    return SentenceTransformer('mixedbread-ai/mxbai-embed-xsmall-v1', truncate_dim=dimensions)
 
 # Load FAISS index and job ID map
 @st.cache_resource
